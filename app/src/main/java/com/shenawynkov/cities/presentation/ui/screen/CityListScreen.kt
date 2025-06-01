@@ -1,5 +1,13 @@
 package com.shenawynkov.cities.presentation.ui.screen
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -11,13 +19,26 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -26,46 +47,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shenawynkov.cities.domain.model.City
 import com.shenawynkov.cities.domain.model.Coordinates
+import com.shenawynkov.cities.presentation.ui.util.countryCodeToEmojiFlag
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 
-// --- Styling Constants ---
-private val ScreenBackgroundColor = Color(0xFFF5F5F7)
-private val TopAppBarTitleColor = Color.Black // Matches image more closely than onSurface
-private val TimelineLineColor = Color(0xFFE0E0E0)
-private val TimelineGutterWidth = 32.dp
-private val CityDotRadius = 5.dp // Results in a 10.dp dot
-private val CityDotColor = Color(0xFFB0B0B0) // Grey dot
-private val GroupHeaderHeight = 48.dp
-private val GroupHeaderCircleSize = 30.dp
-private val GroupHeaderCircleBackgroundColor = Color(0xFFECECEC) // Light grey circle
-private val GroupHeaderCircleBorderColor = Color(0xFFDCDCDC) // Slightly darker border
-private val GroupHeaderLetterColor = Color(0xFF757575) // Muted letter color
+import com.shenawynkov.cities.presentation.ui.util.slideInFromRightAndFadeOnEnter
 
-private val CityCardHeight = 120.dp
-private val CityCardCornerRadius = 20.dp
-private val CityCardFlagSize = 50.dp
-private val FlagEmojiFontSize = 28.sp // Adjusted for emoji rendering in the circle
-private val BottomSearchBarBackgroundColor = Color.White // For the search bar Surface
-private val SearchBarInputBackgroundColor = Color(0xFFEFEFF0) // Added for the search field's internal background
-
-// Constants for the timeline end dot
-private val TimelineEndDotColor = Color(0xFFB0B0B0) // Grey dot, similar to previous CityDotColor
-private val TimelineEndDotRadius = 5.dp          // Results in a 10.dp diameter dot
-private val TimelineFooterHeight = 30.dp         // Height of the space for the end dot
-
-// --- Helper function to convert country code to Emoji flag ---
-fun countryCodeToEmojiFlag(countryCode: String): String {
-    if (countryCode.length != 2) {
-        return "❓" // Return a question mark or empty string for invalid codes
-    }
-    val codePoints = countryCode.uppercase().map {
-        // Regional Indicator Symbol Letter A is 0x1F1E6
-        // Each letter of the country code is an offset from this.
-        0x1F1E6 + (it.code - 'A'.code)
-    }
-    return String(codePoints.toIntArray(), 0, codePoints.size)
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CityListScreen(
     searchQuery: String,
@@ -73,8 +65,20 @@ fun CityListScreen(
     groupedCities: Map<Char, List<City>>,
     cityCount: Int,
     isLoading: Boolean = false,
-    errorMessage: String? = null
+    errorMessage: String? = null,
+    onCityClick: (City) -> Unit
 ) {
+    var isSearchBarFocused by remember { mutableStateOf(false) }
+
+    var isSearchActive by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val localFocusManager = LocalFocusManager.current
+
+    val activeSearchBarSurfaceColor by animateColorAsState(
+        targetValue = if (isSearchBarFocused) BottomSearchBarBackgroundColor else SearchBarInputBackgroundColor,
+        label = "ActiveSearchBarSurfaceColor"
+    )
+
     Scaffold(
         containerColor = ScreenBackgroundColor,
         topBar = {
@@ -93,94 +97,149 @@ fun CityListScreen(
                 )
             )
         },
-        bottomBar = {
-            Surface(
-                color = BottomSearchBarBackgroundColor,
-                shadowElevation = 8.dp
+        bottomBar = { 
+            Box(
+                modifier = Modifier
+                    .background(Color.White)
+                    .imePadding()
+                    .animateContentSize(animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessVeryLow
+                    )),
+                contentAlignment = Alignment.Center
             ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChanged,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    placeholder = { Text("Search...") },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = "Search Icon")
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { onSearchQueryChanged("") }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear Search")
-                            }
+                Column(
+                    modifier = Modifier.background(Color.White),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    AnimatedVisibility(
+                        visible = !isSearchActive,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        CollapsedSearchBar {
+                            isSearchActive = true
                         }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedContainerColor = SearchBarInputBackgroundColor,
-                        unfocusedContainerColor = SearchBarInputBackgroundColor
-                    )
-                )
+                    }
+
+                    AnimatedVisibility(
+                        visible = isSearchActive,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        ActiveSearchBar(
+                            searchQuery = searchQuery,
+                            onSearchQueryChanged = onSearchQueryChanged,
+                            focusRequester = focusRequester,
+                            surfaceColor = activeSearchBarSurfaceColor,
+                            onFocusChanged = { focused ->
+                                isSearchBarFocused = focused
+                            },
+                            onCloseSearch = {
+                                onSearchQueryChanged("")
+                                localFocusManager.clearFocus()
+                                isSearchActive = false
+                                isSearchBarFocused = false
+                            }
+                        )
+                    }
+                }
             }
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
-                .padding(paddingValues)
+                .padding(paddingValues) 
                 .fillMaxSize()
         ) {
-            Text(
+                 Text(
                 text = "$cityCount cities",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.Gray,
-                modifier = Modifier
+                    modifier = Modifier
                     .padding(vertical = 8.dp, horizontal = 16.dp)
                     .align(Alignment.CenterHorizontally)
-            )
+                )
 
-            when {
-                isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
+            AnimatedVisibility(
+                visible = isLoading,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
                 }
-                errorMessage != null -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Error: $errorMessage", color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
-                    }
+            }
+
+            AnimatedVisibility(
+                visible = errorMessage != null && !isLoading,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Error: $errorMessage",
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
-                groupedCities.isEmpty() && searchQuery.isNotEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No cities found for \"$searchQuery\"", textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
-                    }
+            }
+            
+            AnimatedVisibility(
+                visible = groupedCities.isEmpty() && searchQuery.isNotEmpty() && !isLoading && errorMessage == null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No cities found for \"$searchQuery\"",
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
-                groupedCities.isEmpty() && searchQuery.isBlank() && !isLoading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No cities to display. Try a search or check your data.", textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
-                    }
+            }
+
+            AnimatedVisibility(
+                visible = groupedCities.isEmpty() && searchQuery.isBlank() && !isLoading && errorMessage == null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "No cities to display. Try a search or check your data.",
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(16.dp)
+                    )
                 }
-                else -> {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                    ) {
-                        groupedCities.forEach { (letter, citiesInGroup) ->
-                            item(key = "header_$letter") {
-                                TimelineGroupHeader(letter = letter)
-                            }
-                            items(citiesInGroup, key = { city -> "city_${city.id.toString()}" }) { city ->
-                                TimelineCityRow(city = city)
-                            }
+            }
+
+            if (groupedCities.isNotEmpty() && !isLoading && errorMessage == null) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                ) {
+                    groupedCities.forEach { (letter, citiesInGroup) ->
+                        stickyHeader(key = "header_$letter") {
+                            TimelineGroupHeader(
+                                letter = letter,
+                                modifier = Modifier.animateItemPlacement()
+                            )
                         }
-                        // Add the TimelineFooter if there are any cities displayed
-                        if (groupedCities.isNotEmpty()) {
-                            item(key = "timeline_footer") {
-                                TimelineFooter()
-                            }
+                        items(
+                            citiesInGroup,
+                            key = { city -> "city_${city.id.toString()}" }) { city ->
+                            TimelineCityRow(
+                                city = city,
+                                onCityClick = onCityClick,
+                                modifier = Modifier.animateItemPlacement()
+                            )
+                        }
+                    }
+                    if (groupedCities.isNotEmpty()) {
+                        item(key = "timeline_footer") {
+                            TimelineFooter()
                         }
                     }
                 }
@@ -190,11 +249,12 @@ fun CityListScreen(
 }
 
 @Composable
-fun TimelineGroupHeader(letter: Char) {
+fun TimelineGroupHeader(letter: Char, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(GroupHeaderHeight),
+            .height(GroupHeaderHeight)
+            .background(ScreenBackgroundColor),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -203,12 +263,6 @@ fun TimelineGroupHeader(letter: Char) {
                 .fillMaxHeight()
                 .drawBehind {
                     val centerX = size.width / 2
-                    drawLine(
-                        color = TimelineLineColor,
-                        start = Offset(centerX, 0f),
-                        end = Offset(centerX, size.height),
-                        strokeWidth = 2.dp.toPx()
-                    )
                     drawCircle(
                         color = GroupHeaderCircleBackgroundColor,
                         radius = GroupHeaderCircleSize.toPx() / 2,
@@ -221,7 +275,7 @@ fun TimelineGroupHeader(letter: Char) {
                         style = Stroke(width = 1.dp.toPx())
                     )
                 },
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center 
         ) {
             Text(
                 text = letter.toString(),
@@ -234,9 +288,9 @@ fun TimelineGroupHeader(letter: Char) {
 }
 
 @Composable
-fun TimelineCityRow(city: City) {
+fun TimelineCityRow(city: City, onCityClick: (City) -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(CityCardHeight),
         verticalAlignment = Alignment.CenterVertically
@@ -247,7 +301,7 @@ fun TimelineCityRow(city: City) {
                 .fillMaxHeight()
                 .drawBehind {
                     val centerX = size.width / 2f
-                    drawLine(
+                        drawLine(
                         color = TimelineLineColor,
                         start = Offset(x = centerX, y = 0f),
                         end = Offset(x = centerX, y = size.height),
@@ -255,7 +309,14 @@ fun TimelineCityRow(city: City) {
                     )
                 }
         )
-        CityCard(city = city, modifier = Modifier.weight(1f).padding(start = 8.dp, top = 16.dp))
+        CityCard(
+            city = city,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp, end = 4.dp, top = 16.dp, bottom = 8.dp)
+                .slideInFromRightAndFadeOnEnter(),
+            onCityClick = onCityClick
+        )
     }
 }
 
@@ -264,7 +325,7 @@ fun TimelineFooter() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(TimelineFooterHeight), // Height for the footer space
+            .height(TimelineFooterHeight),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -273,17 +334,15 @@ fun TimelineFooter() {
                 .fillMaxHeight()
                 .drawBehind {
                     val centerX = size.width / 2f
-                    val dotCenterY = size.height / 2f // Vertically centered dot
+                    val dotCenterY = size.height / 2f
 
-                    // Line from top of the footer item to the center of the dot
                     drawLine(
                         color = TimelineLineColor,
                         start = Offset(x = centerX, y = 0f),
-                        end = Offset(x = centerX, y = dotCenterY), // Line stops at dot's center
+                        end = Offset(x = centerX, y = dotCenterY),
                         strokeWidth = 2.dp.toPx()
                     )
 
-                    // Draw the filled circle
                     drawCircle(
                         color = TimelineEndDotColor,
                         radius = TimelineEndDotRadius.toPx(),
@@ -291,35 +350,35 @@ fun TimelineFooter() {
                     )
                 }
         )
-        // Spacer to fill the rest of the width, as there's no card here
         Spacer(Modifier.weight(1f))
     }
 }
 
 @Composable
-fun CityCard(city: City, modifier: Modifier = Modifier) {
-    Card(
+fun CityCard(city: City, modifier: Modifier = Modifier, onCityClick: (City) -> Unit) {
+        Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(CityCardHeight),
+            .height(CityCardHeight)
+            .clickable { onCityClick(city) },
         shape = RoundedCornerShape(CityCardCornerRadius),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
-    ) {
-        Row(
-            modifier = Modifier
+        ) {
+            Row(
+                modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
                     .size(CityCardFlagSize)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
                     text = countryCodeToEmojiFlag(city.country),
                     fontSize = FlagEmojiFontSize,
                     textAlign = TextAlign.Center
@@ -327,38 +386,171 @@ fun CityCard(city: City, modifier: Modifier = Modifier) {
             }
 
             Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
                     text = "${city.name}, ${city.country.uppercase()}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = Color.Black
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
+                    Text(
                     text = "Lat: %.4f, Lon: %.4f".format(city.coord.lat, city.coord.lon),
-                    style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
-                )
+                    )
+                }
             }
+        }
+    }
+
+@Composable
+private fun CollapsedSearchBar(onActivateSearch: () -> Unit) {
+    Surface(
+        color = SearchBarInputBackgroundColor,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 20.dp, bottom = 28.dp, start = 16.dp, end = 16.dp)
+            .height(40.dp)
+            .clickable { onActivateSearch() }
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Search Icon",
+                tint = Color.Gray
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Search...", color = Color.Gray)
         }
     }
 }
 
+@Composable
+private fun ActiveSearchBar(
+    searchQuery: String,
+    onSearchQueryChanged: (String) -> Unit,
+    focusRequester: FocusRequester,
+    surfaceColor: Color,
+    onFocusChanged: (Boolean) -> Unit,
+    onCloseSearch: () -> Unit
+) {
+    Surface(
+        color = surfaceColor,
+        modifier = Modifier
+            .padding(vertical = 8.dp)
+    ) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchQueryChanged,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(focusRequester)
+                .onFocusChanged { focusState -> onFocusChanged(focusState.isFocused) }
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            placeholder = { Text("Search...") },
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = "Search Icon",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = {
+                        onSearchQueryChanged("")
+                    }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Clear Search",
+                            tint = Color.Gray
+                        )
+                    }
+                } else {
+                    IconButton(onClick = onCloseSearch) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Close Search",
+                            tint = Color.Gray
+                        )
+                    }
+                }
+            },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color.Transparent,
+                unfocusedBorderColor = Color.Transparent,
+                focusedContainerColor = surfaceColor,
+                unfocusedContainerColor = surfaceColor,
+                cursorColor = TopAppBarTitleColor,
+                focusedTextColor = Color.Black,
+                unfocusedTextColor = Color.Black
+            ),
+            textStyle = TextStyle(color = Color.Black, fontSize = 16.sp)
+        )
+    }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+}
+
 // --- Previews ---
-private fun createPreviewCity(id: Int, name: String, countryCode: String, lat: Double, lon: Double): City {
-    return City(id = id, name = name, country = countryCode, coord = Coordinates(lat = lat, lon = lon))
+private fun createPreviewCity(
+    id: Int,
+    name: String,
+    countryCode: String,
+    lat: Double,
+    lon: Double
+): City {
+    return City(
+        id = id,
+        name = name,
+        country = countryCode,
+        coord = Coordinates(lat = lat, lon = lon)
+    )
 }
 
 @Preview(showBackground = true, widthDp = 360, heightDp = 720)
 @Composable
 fun CityListScreenPreview_Populated() {
     val previewCities = listOf(
-        createPreviewCity(id = 1, name = "Aabenraa", countryCode = "DK", lat = 55.0443, lon = 9.4174),
-        createPreviewCity(id = 2, name = "Aalborg", countryCode = "DK", lat = 57.0488, lon = 9.9177),
-        createPreviewCity(id = 3, name = "Berlin", countryCode = "DE", lat = 52.5200, lon = 13.4050),
-        createPreviewCity(id = 4, name = "Zaamslag", countryCode = "NL", lat = 51.3125, lon = 3.9125)
+        createPreviewCity(
+            id = 1,
+            name = "Aabenraa",
+            countryCode = "DK",
+            lat = 55.0443,
+            lon = 9.4174
+        ),
+        createPreviewCity(
+            id = 2,
+            name = "Aalborg",
+            countryCode = "DK",
+            lat = 57.0488,
+            lon = 9.9177
+        ),
+        createPreviewCity(
+            id = 3,
+            name = "Berlin",
+            countryCode = "DE",
+            lat = 52.5200,
+            lon = 13.4050
+        ),
+        createPreviewCity(
+            id = 4,
+            name = "Zaamslag",
+            countryCode = "NL",
+            lat = 51.3125,
+            lon = 3.9125
+        )
     )
     MaterialTheme {
         CityListScreen(
@@ -367,7 +559,8 @@ fun CityListScreenPreview_Populated() {
             groupedCities = previewCities.groupBy { it.name.first().uppercaseChar() }.toSortedMap(),
             cityCount = previewCities.size,
             isLoading = false,
-            errorMessage = null
+            errorMessage = null,
+            onCityClick = {}
         )
     }
 }
@@ -382,7 +575,8 @@ fun CityListScreenPreview_Loading() {
             groupedCities = emptyMap(),
             cityCount = 0,
             isLoading = true,
-            errorMessage = null
+            errorMessage = null,
+            onCityClick = {}
         )
     }
 }
@@ -397,7 +591,8 @@ fun CityListScreenPreview_Error() {
             groupedCities = emptyMap(),
             cityCount = 0,
             isLoading = false,
-            errorMessage = "Failed to load cities. Please try again."
+            errorMessage = "Failed to load cities. Please try again.",
+            onCityClick = {}
         )
     }
 }
@@ -412,7 +607,8 @@ fun CityListScreenPreview_NoResults() {
             groupedCities = emptyMap(),
             cityCount = 0,
             isLoading = false,
-            errorMessage = null
+            errorMessage = null,
+            onCityClick = {}
         )
     }
 }
@@ -421,7 +617,9 @@ fun CityListScreenPreview_NoResults() {
 @Composable
 fun TimelineFooterPreview() {
     MaterialTheme {
-        Box(modifier = Modifier.background(ScreenBackgroundColor).padding(16.dp)) {
+        Box(modifier = Modifier
+            .background(ScreenBackgroundColor)
+            .padding(16.dp)) {
             TimelineFooter()
         }
     }
@@ -431,7 +629,9 @@ fun TimelineFooterPreview() {
 @Composable
 fun TimelineGroupHeaderPreview() {
     MaterialTheme {
-        Box(modifier = Modifier.background(ScreenBackgroundColor).padding(16.dp)) {
+        Box(modifier = Modifier
+            .background(ScreenBackgroundColor)
+            .padding(16.dp)) {
             TimelineGroupHeader(letter = 'A')
         }
     }
@@ -440,10 +640,18 @@ fun TimelineGroupHeaderPreview() {
 @Preview(showBackground = true, widthDp = 360)
 @Composable
 fun TimelineCityRowPreview() {
-    val previewCity = createPreviewCity(id = 1, name = "Aabenraa", countryCode = "DK", lat = 55.0443, lon = 9.4174)
+    val previewCity = createPreviewCity(
+        id = 1,
+        name = "Aabenraa",
+        countryCode = "DK",
+        lat = 55.0443,
+        lon = 9.4174
+    )
     MaterialTheme {
-         Box(modifier = Modifier.background(ScreenBackgroundColor).padding(16.dp)) {
-            TimelineCityRow(city = previewCity)
+        Box(modifier = Modifier
+            .background(ScreenBackgroundColor)
+            .padding(16.dp)) {
+            TimelineCityRow(city = previewCity, onCityClick = {})
         }
     }
 }
@@ -451,10 +659,18 @@ fun TimelineCityRowPreview() {
 @Preview(showBackground = true, widthDp = 340)
 @Composable
 fun CityCardPreview() {
-    val previewCity = createPreviewCity(id = 1, name = "Aabenraa", countryCode = "DK", lat = 55.0443, lon = 9.4174)
+    val previewCity = createPreviewCity(
+        id = 1,
+        name = "Aabenraa",
+        countryCode = "DK",
+        lat = 55.0443,
+        lon = 9.4174
+    )
     MaterialTheme {
-        Box(modifier = Modifier.background(ScreenBackgroundColor).padding(16.dp)) {
-             CityCard(city = previewCity)
+        Box(modifier = Modifier
+            .background(ScreenBackgroundColor)
+            .padding(16.dp)) {
+            CityCard(city = previewCity, onCityClick = {})
         }
     }
 } 

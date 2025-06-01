@@ -1,10 +1,13 @@
 package com.shenawynkov.cities.presentation.viewmodel
 
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shenawynkov.cities.domain.model.City
 import com.shenawynkov.cities.domain.usecase.GetInitialCitiesUseCase
 import com.shenawynkov.cities.domain.usecase.SearchCitiesUseCase
+import com.shenawynkov.cities.presentation.navigation.MapNavigator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -14,6 +17,7 @@ import javax.inject.Inject
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class CityViewModel @Inject constructor(
+    private val mapNavigator: MapNavigator,
     private val getInitialCitiesUseCase: GetInitialCitiesUseCase,
     private val searchCitiesUseCase: SearchCitiesUseCase
 ) : ViewModel() {
@@ -27,9 +31,7 @@ class CityViewModel @Inject constructor(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // This will hold the list of cities to be displayed, whether it's the full list or search results.
     private val _displayCities = MutableStateFlow<List<City>>(emptyList())
-    // val displayCities: StateFlow<List<City>> = _displayCities.asStateFlow() // If direct list needed
 
     val cityCount: StateFlow<Int> = _displayCities
         .map { it.size }
@@ -51,7 +53,6 @@ class CityViewModel @Inject constructor(
         initialValue = emptyMap()
     )
     
-    // Removed: private var fullSortedCityList: List<City> = emptyList()
 
     init {
         loadInitialCities()
@@ -63,7 +64,7 @@ class CityViewModel @Inject constructor(
             _isLoading.value = true
             _errorMessage.value = null
             try {
-                getInitialCitiesUseCase()
+            getInitialCitiesUseCase()
                     .catch { e ->
                         e.printStackTrace()
                         _errorMessage.value = "Failed to load cities: ${e.message ?: "Unknown error"}"
@@ -106,7 +107,7 @@ class CityViewModel @Inject constructor(
                     // _isLoading.value should be handled by finally or a separate state in flow
                 }
                 .onEach { cities ->
-                     _displayCities.value = cities
+                    _displayCities.value = cities
                      _isLoading.value = false // Set loading to false after collecting results
                      if (cities.isEmpty() && searchText.value.isNotBlank()){
                         // If search is successful but returns no results for a non-blank query.
@@ -123,5 +124,16 @@ class CityViewModel @Inject constructor(
     fun onSearchTextChanged(text: String) {
         _searchText.value = text
         // The actual search logic is now handled by observing _searchText changes in observeSearchText()
+    }
+
+    fun openCityOnMap(city: City) {
+        try {
+            mapNavigator.navigateToMap(city)
+                } catch (e: Exception) {
+            // If MapNavigator throws an exception (e.g., ActivityNotFoundException if not handled internally)
+            // Or if we want to centralize error messaging based on MapNavigator's internal state if it were to return a status.
+                    e.printStackTrace()
+            _errorMessage.value = "Could not open map: ${e.message ?: "Unknown error"}"
+        }
     }
 } 

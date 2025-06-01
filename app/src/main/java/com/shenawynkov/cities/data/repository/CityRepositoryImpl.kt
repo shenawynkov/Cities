@@ -14,18 +14,33 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.decodeFromString
 import java.io.IOException
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Repository implementation for managing city data.
+ * Given the assignment constraint that "Database implementations are forbidden",
+ * this repository loads all city data from a JSON asset into memory upon first request.
+ * It uses a Trie data structure for efficient, case-insensitive prefix searching of city names,
+ * aiming for O(L) search complexity (L = prefix length) to meet performance requirements.
+ *
+ * The entire dataset (~200,000 cities) is held in a sorted list in memory (`_allCitiesSorted`)
+ * for display, and the Trie also resides in memory. This approach carries a significant
+ * risk of OutOfMemoryError on devices with limited RAM, especially considering Android 5.0+
+ * compatibility. This is a direct consequence of the "no database" constraint when handling
+ * such a large dataset.
+ *
+ * The initial loading and processing (sorting, Trie building) time is not a primary concern
+ * as per assignment requirements ("Initial loading time of the app does not matter").
+ */
 @Singleton
 class CityRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val json: Json,
     private val trie: Trie,
-    private val ioDispatcher: CoroutineDispatcher // Already provided by AppModule
+    private val ioDispatcher: CoroutineDispatcher
 ) : CityRepository {
 
     private val _allCitiesSorted = MutableStateFlow<List<City>>(emptyList())
@@ -44,7 +59,7 @@ class CityRepositoryImpl @Inject constructor(
      * For ~200k entries, this is memory-intensive and risks OOM on lower-end devices,
      * but is chosen to meet the "no database" and "better than linear search" requirements.
      */
-    override suspend fun populateDatabaseFromSourceRequestIfNeeded() { // Renaming to loadAndProcessCitiesIfNeeded internally
+    override suspend fun populateTrieFromSourceRequestIfNeeded() {
         loadAndProcessCitiesIfNeeded()
     }
 
@@ -55,7 +70,7 @@ class CityRepositoryImpl @Inject constructor(
             // Double-check after acquiring the lock
             if (areCitiesLoadedAndProcessed) return@withLock
 
-            try {
+                try {
                 val jsonString = withContext(ioDispatcher) {
                     context.assets.open(CITIES_JSON_FILE_NAME).bufferedReader().use { it.readText() }
                 }
@@ -66,17 +81,17 @@ class CityRepositoryImpl @Inject constructor(
                     citiesDomainList.sortedWith(
                         compareBy({ it.name.lowercase(Locale.getDefault()) }, { it.country.lowercase(Locale.getDefault()) })
                     )
-                }
-                _allCitiesSorted.value = sortedCities
-
+                    }
+                    _allCitiesSorted.value = sortedCities
+                    
                 // Build the Trie for searching (uses city.name internally)
-                withContext(Dispatchers.Default) { // Use Default dispatcher for Trie building
-                    trie.build(sortedCities) // Pass the sorted list, Trie will use city.name
-                }
+                    withContext(Dispatchers.Default) {
+                        trie.build(sortedCities)
+                    }
                 areCitiesLoadedAndProcessed = true
-            } catch (e: IOException) {
-                e.printStackTrace()
-                _allCitiesSorted.value = emptyList() // Emit empty list on error
+                } catch (e: IOException) {
+                    e.printStackTrace()
+                    _allCitiesSorted.value = emptyList() // Emit empty list on error
                 // Handle error, e.g., log, notify user. Data won't be available.
             } catch (e: Exception) { // Catch serialization or other exceptions
                 e.printStackTrace()
@@ -86,27 +101,16 @@ class CityRepositoryImpl @Inject constructor(
     }
 
     override fun getCities(): Flow<List<City>> {
-        // This Flow will emit the full sorted list once loaded.
-        // Call ensureLoaded to trigger loading if it hasn't happened.
-        // For simplicity here, assuming loadAndProcessCitiesIfNeeded is called from Application/ViewModel init.
         return _allCitiesSorted.asStateFlow()
     }
 
     override fun searchCities(query: String): Flow<List<City>> {
-        // Ensure data is loaded before searching. For simplicity, assume it is.
-        // The search itself is not a Flow generating operation with the Trie, it's direct.
-        // We wrap the result in a flow to match the repository interface, but it emits only one list.
-        // ViewModel will need to handle this appropriately if it expects continuous updates from search Flow.
-        // Given the constraints, direct list return from a suspend fun might be better for the use case.
-        // However, to keep changes minimal for now, wrap in a flow.
 
         val searchResults = if (query.isBlank()) {
-            _allCitiesSorted.value // Return all sorted cities if query is blank
-        } else {
-            trie.search(query).sortedWith( // Trie results also need to be sorted for consistent display
-                compareBy({ it.name.lowercase(Locale.getDefault()) }, { it.country.lowercase(Locale.getDefault()) })
-            )
+                _allCitiesSorted.value
+            } else {
+            trie.search(query)
         }
-        return MutableStateFlow(searchResults).asStateFlow() // Emit as a simple state flow
+        return MutableStateFlow(searchResults).asStateFlow()
     }
 } 

@@ -9,8 +9,7 @@ class GetInitialCitiesUseCase @Inject constructor(
     private val cityRepository: CityRepository
 ) {
     suspend operator fun invoke(): Flow<List<City>> {
-        // Ensure the database is populated before attempting to get cities
-        cityRepository.populateDatabaseFromSourceRequestIfNeeded()
+        cityRepository.populateTrieFromSourceRequestIfNeeded()
         return cityRepository.getCities()
     }
 } 

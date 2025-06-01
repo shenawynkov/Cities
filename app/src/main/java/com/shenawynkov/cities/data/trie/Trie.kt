@@ -1,15 +1,27 @@
 package com.shenawynkov.cities.data.trie
 
-// Updated import to reflect new model location
 import com.shenawynkov.cities.domain.model.City
 import java.util.Locale // For lowercase normalization
 
+/**
+ * Represents a node in the Trie.
+ * Each node has children mapping to subsequent characters and can mark the end of a word (city name).
+ * It stores a list of City objects if multiple cities end at this node (e.g., same name in different countries,
+ * though city ID should make them unique, Trie key is based on name string).
+ */
 class TrieNode {
     val children: MutableMap<Char, TrieNode> = mutableMapOf()
     var isEndOfWord: Boolean = false
-    val cities: MutableList<City> = mutableListOf() // Store City objects at the end of a word
+    val cities: MutableList<City> = mutableListOf()
 }
 
+/**
+ * A Trie (Prefix Tree) data structure optimized for fast prefix-based searches of city names.
+ * This implementation is chosen to meet the requirement for a search algorithm with
+ * time efficiency better than linear (O(L) where L is the length of the prefix)
+ *
+ * It stores city names in a case-insensitive manner by normalizing them to lowercase.
+ */
 class Trie {
     private val root = TrieNode()
     private var isBuilt = false
@@ -18,9 +30,9 @@ class Trie {
      * Inserts a city into the Trie.
      * The city name is normalized to lowercase for case-insensitive storage and search.
      */
-    fun insert(city: City) {
+    private fun insert(city: City) {
         var current = root
-        val normalizedName = city.name.lowercase(Locale.getDefault())
+        val normalizedName = city.name.lowercase(Locale.ENGLISH)
         for (char in normalizedName) {
             current = current.children.getOrPut(char) { TrieNode() }
         }
@@ -84,7 +96,7 @@ class Trie {
     /**
      * Resets the Trie to an empty state.
      */
-    fun reset() {
+    private fun reset() {
         root.children.clear()
         root.isEndOfWord = false
         root.cities.clear()

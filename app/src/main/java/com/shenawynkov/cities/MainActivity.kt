@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.shenawynkov.cities.presentation.ui.screen.CityListScreen
 import com.shenawynkov.cities.presentation.ui.theme.CitiesTheme
@@ -20,6 +21,7 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             CitiesTheme {
                 Surface(
@@ -49,9 +51,7 @@ fun CityApp(
         groupedCities = groupedCities,
         cityCount = cityCount,
         isLoading = isLoading,
-        errorMessage = errorMessage
+        errorMessage = errorMessage,
+        onCityClick = viewModel::openCityOnMap
     )
 }
-
-// Greeting and GreetingPreview can be removed if no longer needed, or kept for other previews.
-// For this task, they are not essential for the main app flow. 

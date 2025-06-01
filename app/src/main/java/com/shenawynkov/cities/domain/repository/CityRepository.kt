@@ -20,5 +20,5 @@ interface CityRepository {
      * into the database if it hasn't been done already.
      * This should be called on app startup.
      */
-    suspend fun populateDatabaseFromSourceRequestIfNeeded()
+    suspend fun populateTrieFromSourceRequestIfNeeded()
 } 
